@@ -7,10 +7,12 @@
     let openedIds = new Set();
     let threadMap = {}; // threadId -> trackingId
 
-    // Load saved data
+    // Load saved data and THEN start processing
     chrome.storage.local.get(['notifiedIds', 'threadMap'], (res) => {
         if (res.notifiedIds) openedIds = new Set(res.notifiedIds);
         if (res.threadMap) threadMap = res.threadMap;
+        console.log('[MT] Data loaded from storage. Threads:', Object.keys(threadMap).length);
+        processPage(); // Run once after data is ready
     });
 
     function generateTrackingId() {
@@ -28,7 +30,10 @@
     }
 
     function getThreadId(row) {
-        return row.getAttribute('data-thread-id');
+        // Try multiple ways to get the thread ID
+        return row.getAttribute('data-thread-id') || 
+               row.getAttribute('data-legacy-thread-id') || 
+               row.id;
     }
 
     // =========================
@@ -236,7 +241,7 @@
             subtree: true
         });
 
-        processPage();
+        // processPage() is now called inside the storage callback above
         setInterval(fetchStatus, 5000);
     }
 
