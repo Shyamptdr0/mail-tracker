@@ -1,0 +1,51 @@
+/* Gmail Tracking Ticks Styling */
+
+.mt-ticks-container {
+    display: inline-flex;
+    vertical-align: middle;
+    margin-right: 10px;
+    margin-left: 5px;
+    line-height: 1;
+    flex-shrink: 0;
+    white-space: nowrap;
+    align-items: center;
+}
+
+.mt-double-tick {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    background-size: contain;
+    background-repeat: no-repeat;
+}
+
+/* Using a more bold SVG for gray double ticks to match screenshot */
+.mt-double-tick-gray {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%23999999" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L7 17l-5-5"></path><path d="M22 10L13.5 18.5l-2-2"></path></svg>');
+}
+
+.mt-double-tick-green {
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="%234CAF50" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L7 17l-5-5"></path><path d="M22 10L13.5 18.5l-2-2"></path></svg>');
+}
+
+/* Hidden Tracking Pixel Styling */
+.mt-pixel-container,
+.mt-tracking-pixel {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+    pointer-events: none !important;
+    position: absolute !important;
+    left: -9999px !important;
+}
+
+/* Premium animation for injection */
+@keyframes mt-fade-in {
+    from { opacity: 0; transform: scale(0.8); }
+    to { opacity: 0.6; transform: scale(1); }
+}
+
+.mt-double-tick-gray {
+    animation: mt-fade-in 0.3s ease-out forwards;
+}

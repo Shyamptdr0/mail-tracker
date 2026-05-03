@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Gmail Tracker Pro",
+  "version": "1.0",
+  "description": "Injects tracking indicators into Gmail Sent folder.",
+  "permissions": [
+    "storage",
+    "notifications"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://loud-facts-try.loca.lt/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "48": "icon.png"
+  }
+}
