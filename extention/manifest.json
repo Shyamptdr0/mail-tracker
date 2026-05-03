@@ -8,8 +8,8 @@
     "notifications"
   ],
   "host_permissions": [
-    "https://mail.google.com/*",
-    "https://loud-facts-try.loca.lt/*"
+    "https://mail-tracker-new-1.onrender.com/*",
+    "https://mail.google.com/*"
   ],
   "content_scripts": [
     {

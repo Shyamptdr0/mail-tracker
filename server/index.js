@@ -45,8 +45,8 @@ app.get('/register/:id', (req, res) => {
 
     trackingData[trackingId] = {
         opened: false,
-        registeredAt: new Date(),
-        senderIp: req.ip,
+        registeredAt: Date.now(),
+        senderId: req.cookies.mt_sender,
         recipient: recipient
     };
     console.log(`Tracking ID Registered: ${trackingId} (For: ${recipient})`);
@@ -69,17 +69,27 @@ app.get('/track/:id', (req, res) => {
     console.log(`Cookies: ${JSON.stringify(req.cookies)}`);
 
     // Detect if this is a self-open via cookie
-    const isSender = req.cookies.mt_sender === 'true';
+    const senderCookie = req.cookies.mt_sender;
+    const isSender = senderCookie && trackingData[trackingId] && trackingData[trackingId].senderId === senderCookie;
 
     // Detect mail proxies
-    const isProxy = req.get('User-Agent').includes('GoogleImageProxy') ||
-        req.get('User-Agent').includes('YahooMailProxy') ||
-        req.get('User-Agent').includes('via ggpht.com');
+    const userAgent = req.get('User-Agent') || '';
+    const isProxy = userAgent.includes('GoogleImageProxy') ||
+        userAgent.includes('YahooMailProxy') ||
+        userAgent.includes('via ggpht.com');
 
-    if (isSender && !isProxy) {
+    // Threshold: Ignore proxy requests within first 10 seconds (often automatic bot scans)
+    const timeSinceRegistration = Date.now() - (trackingData[trackingId]?.registeredAt || 0);
+    const isTooEarly = timeSinceRegistration < 10000; 
+
+    if (isSender) {
         console.log(`>>> Ignored: Self-open detected (Sender Cookie)`);
-        res.set('Content-Type', 'image/png');
-        return res.send(pixelBuffer);
+        return res.sendFile(pixelPath);
+    }
+
+    if (isProxy && isTooEarly) {
+        console.log(`>>> Ignored: Early bot scan (Proxy detected)`);
+        return res.sendFile(pixelPath);
     }
 
     if (!trackingData[trackingId]) {

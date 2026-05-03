@@ -1,7 +1,7 @@
 (function () {
     'use strict';
 
-    const SERVER_URL = 'https://loud-facts-try.loca.lt';
+    const SERVER_URL = 'https://mail-tracker-new-1.onrender.com';
     const TICKS_CLASS = 'mt-ticks-container';
 
     let openedIds = new Set();
@@ -54,6 +54,9 @@
                 action: 'fetchStatus',
                 url: `${SERVER_URL}/register/${id}?to=${encodeURIComponent(recipient)}`
             });
+            
+            // Mark as recently sent to help fallback mapping
+            window._lastMTId = id;
         }
 
         console.log('[MT] Pixel injected:', id);
@@ -150,8 +153,17 @@
                 attachSendListener(cb);
             });
 
-        // Email rows
+        // Scan for new threads that might have been missed
         document.querySelectorAll('.zA').forEach(row => {
+            const threadId = getThreadId(row);
+            if (threadId && !threadMap[threadId] && window._lastMTId) {
+                // Auto-map if we just sent something and see a new row
+                threadMap[threadId] = window._lastMTId;
+                if (chrome.runtime?.id) {
+                    chrome.storage.local.set({ threadMap });
+                }
+                console.log('[MT] Fallback mapping successful:', threadId);
+            }
             injectTicks(row);
         });
     }
