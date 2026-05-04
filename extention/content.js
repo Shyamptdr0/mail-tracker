@@ -68,46 +68,56 @@
     }
 
     // =========================
-    // 📌 SEND BUTTON LISTENER
+    // 📌 SEND DETECTION
     // =========================
+    function handleSend(composeBody) {
+        const pixel = composeBody.querySelector('.mailtrack-img');
+        if (!pixel) return;
+
+        const trackingId = pixel.dataset.id;
+        const recipient = getRecipient(composeBody);
+
+        console.log('[MT] Marking as SENT:', trackingId);
+
+        // Notify server that mail is actually being sent NOW
+        if (chrome.runtime?.id) {
+            chrome.runtime.sendMessage({
+                action: 'fetchStatus',
+                url: `${SERVER_URL}/register/${trackingId}?to=${encodeURIComponent(recipient)}&sent=true`
+            });
+        }
+
+        // Fallback: Map thread after a delay
+        setTimeout(() => {
+            const rows = document.querySelectorAll('.zA, [role="grid"] tr[id], .v7');
+            rows.forEach(row => {
+                const threadId = getThreadId(row);
+                if (threadId && !threadMap[threadId]) {
+                    threadMap[threadId] = trackingId;
+                }
+            });
+
+            if (chrome.runtime?.id) {
+                chrome.storage.local.set({ threadMap });
+            }
+            processPage();
+        }, 3000);
+    }
+
     function attachSendListener(composeBody) {
         const box = composeBody.closest('div.M9, div.AD');
         if (!box || box.dataset.mtAttached) return;
 
-        const sendBtn = box.querySelector('[data-tooltip*="Send"]');
+        // 1. Click Listener (Multiple selectors for robustness)
+        const sendBtn = box.querySelector('[data-tooltip*="Send"], .T-I-KE, [role="button"]:not([data-tooltip]):not([aria-label]):not([id])');
+        
+        sendBtn?.addEventListener('click', () => handleSend(composeBody));
 
-        sendBtn?.addEventListener('click', () => {
-            const pixel = composeBody.querySelector('.mailtrack-img');
-            if (!pixel) return;
-
-            const trackingId = pixel.dataset.id;
-            const recipient = getRecipient(composeBody);
-
-            // Notify server that mail is actually being sent NOW
-            // This resets the 10-second cooldown on the server
-            if (chrome.runtime?.id) {
-                chrome.runtime.sendMessage({
-                    action: 'fetchStatus',
-                    url: `${SERVER_URL}/register/${trackingId}?to=${encodeURIComponent(recipient)}&sent=true`
-                });
+        // 2. Keyboard Listener (Ctrl+Enter / Cmd+Enter)
+        composeBody.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                handleSend(composeBody);
             }
-
-            // Wait for Gmail to create thread (increased timeout for reliability)
-            setTimeout(() => {
-                document.querySelectorAll('.zA').forEach(row => {
-                    const threadId = getThreadId(row);
-                    if (threadId && !threadMap[threadId]) {
-                        threadMap[threadId] = trackingId;
-                    }
-                });
-
-                if (chrome.runtime?.id) {
-                    chrome.storage.local.set({ threadMap });
-                }
-
-                console.log('[MT] Thread map updated:', threadMap);
-                processPage(); // Force UI update to show ticks
-            }, 3000);
         });
 
         box.dataset.mtAttached = 'true';

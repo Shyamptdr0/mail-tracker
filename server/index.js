@@ -20,6 +20,7 @@ const trackingSchema = new mongoose.Schema({
     senderId: { type: String },
     senderIp: { type: String },
     registeredAt: { type: Date, default: Date.now },
+    isSent: { type: Boolean, default: false }, // New flag to prevent pre-send triggers
     
     // Summary data
     opened: { type: Boolean, default: false },
@@ -94,6 +95,7 @@ app.get('/register/:id', async (req, res) => {
         const recipient = req.query.to || 'Someone';
         const senderId = req.cookies.mt_sender;
         const senderIp = req.ip;
+        const isSent = req.query.sent === 'true';
 
         await Tracking.findOneAndUpdate(
             { trackingId },
@@ -101,12 +103,13 @@ app.get('/register/:id', async (req, res) => {
                 recipient, 
                 senderId,
                 senderIp,
-                registeredAt: Date.now()
+                registeredAt: Date.now(),
+                isSent: isSent // Only true when the mail is actually sent
             },
             { upsert: true, new: true }
         );
 
-        console.log(`[REGISTER] ID: ${trackingId} | For: ${recipient}`);
+        console.log(`[REGISTER] ID: ${trackingId} | Sent: ${isSent} | For: ${recipient}`);
         res.json({ success: true });
     } catch (error) {
         console.error('Registration Error:', error);
@@ -149,10 +152,12 @@ app.get('/track/:id', async (req, res) => {
         const timeSinceRegistration = Date.now() - new Date(tracking.registeredAt).getTime();
         const isCooldown = timeSinceRegistration < 30000; // 30s strict cooldown
 
-        let isValidOpen = !isSender && !isProxy && !isCooldown && userAgent.length > 10;
+        // CRITICAL: Only mark as opened if it's explicitly SENT
+        let isValidOpen = tracking.isSent && !isSender && !isProxy && !isCooldown && userAgent.length > 10;
 
         let statusReason = "";
-        if (isSender) statusReason = "Sender";
+        if (!tracking.isSent) statusReason = "Not Sent Yet";
+        else if (isSender) statusReason = "Sender";
         else if (isProxy) statusReason = "Proxy";
         else if (isCooldown) statusReason = "Cooldown";
         else if (userAgent.length <= 10) statusReason = "Invalid UA";
@@ -196,6 +201,7 @@ app.get('/track/:id', async (req, res) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.send(pixelBuffer);
 });
+
 
 /**
  * Status Check Endpoint
