@@ -186,61 +186,28 @@
     }
 
     // =========================
-    // 📌 FETCH STATUS
+    // 📌 FETCH STATUS (Now handled by background, this is for UI updates)
     // =========================
-    function fetchStatus() {
-        if (!chrome.runtime?.id) return; // Stop if extension reloaded
-        
-        chrome.runtime.sendMessage(
-            { action: 'fetchStatus', url: `${SERVER_URL}/all-status` },
-            (res) => {
-                if (!res?.success) return;
-
-                let changed = false;
-                let newOpens = [];
-
-                Object.entries(res.data).forEach(([id, data]) => {
-                    if (data.opened && !openedIds.has(id)) {
-                        openedIds.add(id);
-                        newOpens.push(data.recipient || 'Someone');
-                        changed = true;
-                    }
-                });
-
-                if (newOpens.length > 0) {
-                    if (newOpens.length === 1) {
-                        showNotification(newOpens[0], '✓✓ Email Opened');
-                    } else if (newOpens.length <= 3) {
-                        showNotification('Multiple Emails Opened', newOpens.join(', '));
-                    } else {
-                        showNotification('Email Activity', `${newOpens.length} emails have been opened.`);
-                    }
-                }
-
-                if (changed && chrome.runtime?.id) {
-                    chrome.storage.local.set({
-                        notifiedIds: [...openedIds]
-                    });
-
-                    processPage();
-                }
+    function syncStatus() {
+        chrome.storage.local.get(['notifiedIds'], (res) => {
+            if (res.notifiedIds) {
+                openedIds = new Set(res.notifiedIds);
+                processPage();
             }
-        );
+        });
     }
 
-    // =========================
-    // 📌 NOTIFICATIONS
-    // =========================
-    function showNotification(title, message) {
-        if (Notification.permission === 'granted') {
-            new Notification(title, {
-                body: message,
-                icon: 'https://cdn-icons-png.flaticon.com/512/190/190411.png'
-            });
-        } else {
-            Notification.requestPermission();
+    // Listen for messages from background script
+    chrome.runtime.onMessage.addListener((request) => {
+        if (request.action === 'updateUI') {
+            syncStatus();
         }
-    }
+    });
+
+    // =========================
+    // 📌 NOTIFICATIONS (Moved to background.js)
+    // =========================
+    // removed showNotification function
 
     // =========================
     // 📌 INIT
@@ -260,11 +227,11 @@
             subtree: true
         });
 
-        // processPage() is now called inside the storage callback above
-        setInterval(fetchStatus, 5000);
+        // initial sync
+        syncStatus();
     }
 
     init();
     window.addEventListener('hashchange', processPage);
 
-})();
+})();

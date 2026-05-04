@@ -4,6 +4,7 @@ const path = require('path');
 const cookieParser = require('cookie-parser');
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,30 +13,47 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/mailtr
 // MongoDB Connection
 mongoose.connect(MONGODB_URI)
     .then(() => console.log('✅ Connected to MongoDB'))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
-
-// Tracking Schema
+    .catch(err => console.error('❌ MongoDB Connection Error:', err));// Tracking Schema (Professional Version)
 const trackingSchema = new mongoose.Schema({
     trackingId: { type: String, required: true, unique: true },
     recipient: { type: String, default: 'Someone' },
     senderId: { type: String },
-    senderIp: { type: String }, // Store sender's IP during registration
-    opened: { type: Boolean, default: false },
+    senderIp: { type: String },
     registeredAt: { type: Date, default: Date.now },
-    openedAt: { type: Date },
-    ip: { type: String },
-    userAgent: { type: String },
+    
+    // Summary data
+    opened: { type: Boolean, default: false },
+    firstOpenedAt: { type: Date },
+    lastOpenedAt: { type: Date },
+    totalOpens: { type: Number, default: 0 },
+    
+    // Detailed history
+    opens: [{
+        at: { type: Date, default: Date.now },
+        ip: String,
+        ua: String,
+        device: String, // Desktop, Mobile, Tablet
+        isProxy: Boolean
+    }],
+    
+    // Raw hits (including proxies/self-opens for debugging)
     hits: [{
         at: { type: Date, default: Date.now },
         ip: String,
         ua: String,
-        isProxy: Boolean,
-        isSender: Boolean,
         reason: String
     }]
 });
 
 const Tracking = mongoose.model('Tracking', trackingSchema);
+
+// Helper to detect device type
+function getDeviceType(ua) {
+    if (!ua) return 'Unknown';
+    if (/mobile/i.test(ua)) return 'Mobile';
+    if (/tablet/i.test(ua)) return 'Tablet';
+    return 'Desktop';
+}
 
 app.use(cors({
     origin: true,
@@ -50,7 +68,6 @@ const pixelBuffer = Buffer.from(PIXEL_BASE64, 'base64');
 
 /**
  * Init Sender Endpoint
- * Sets a unique sender ID cookie to prevent self-opens.
  */
 app.get('/init-sender', (req, res) => {
     let senderId = req.cookies.mt_sender;
@@ -89,7 +106,7 @@ app.get('/register/:id', async (req, res) => {
             { upsert: true, new: true }
         );
 
-        console.log(`Tracking ID Registered: ${trackingId} (For: ${recipient}) from IP: ${senderIp}`);
+        console.log(`[REGISTER] ID: ${trackingId} | For: ${recipient}`);
         res.json({ success: true });
     } catch (error) {
         console.error('Registration Error:', error);
@@ -98,7 +115,7 @@ app.get('/register/:id', async (req, res) => {
 });
 
 /**
- * Tracking Endpoint
+ * Tracking Endpoint (Professional Logic)
  */
 app.get('/track/:id', async (req, res) => {
     let trackingId = req.params.id;
@@ -110,21 +127,16 @@ app.get('/track/:id', async (req, res) => {
     const ip = req.ip;
     const senderCookie = req.cookies.mt_sender;
 
-    console.log(`--- Tracking Request: ${trackingId} ---`);
-
     try {
         const tracking = await Tracking.findOne({ trackingId });
 
         if (!tracking) {
-            console.log(`>>> Warning: Tracking ID ${trackingId} not found in DB`);
             res.set('Content-Type', 'image/png');
             return res.send(pixelBuffer);
         }
 
-        // 1. Detect Self-Open (ONLY Cookie, IP is unreliable)
+        // 1. Detection Logic
         const isSender = senderCookie && tracking.senderId === senderCookie;
-
-        // 2. Detect Proxies/Bots (Stronger Filter)
         const isProxy =
             userAgent.includes('GoogleImageProxy') ||
             userAgent.includes('YahooMailProxy') ||
@@ -134,50 +146,44 @@ app.get('/track/:id', async (req, res) => {
             userAgent.toLowerCase().includes('fetch') ||
             userAgent.toLowerCase().includes('bot');
 
-        // 3. Detect "Too Early" (Cooldown - increased to 30s)
         const timeSinceRegistration = Date.now() - new Date(tracking.registeredAt).getTime();
-        const isCooldown = timeSinceRegistration < 30000; 
+        const isCooldown = timeSinceRegistration < 30000; // 30s strict cooldown
 
-        // 4. Strict Marking Logic
-        let shouldMarkOpened = false;
+        let isValidOpen = !isSender && !isProxy && !isCooldown && userAgent.length > 10;
 
-        if (
-            !isSender &&
-            !isProxy &&
-            !isCooldown &&
-            !tracking.opened &&
-            userAgent &&
-            userAgent.length > 10
-        ) {
-            shouldMarkOpened = true;
+        let statusReason = "";
+        if (isSender) statusReason = "Sender";
+        else if (isProxy) statusReason = "Proxy";
+        else if (isCooldown) statusReason = "Cooldown";
+        else if (userAgent.length <= 10) statusReason = "Invalid UA";
+        else statusReason = "Valid Open";
+
+        // 2. Update Record
+        if (isValidOpen) {
+            const now = new Date();
+            tracking.opened = true;
+            if (!tracking.firstOpenedAt) tracking.firstOpenedAt = now;
+            tracking.lastOpenedAt = now;
+            tracking.totalOpens += 1;
+            
+            tracking.opens.push({
+                at: now,
+                ip,
+                ua: userAgent,
+                device: getDeviceType(userAgent),
+                isProxy: false
+            });
+
+            console.log(`✅ [READ] ${tracking.recipient} opened ${trackingId} (${getDeviceType(userAgent)})`);
         }
 
-        let reason = "";
-        if (isSender) reason = "Self-open (Cookie)";
-        else if (isProxy) reason = "Proxy/Bot detected";
-        else if (isCooldown) reason = "Cooldown (30s rule)";
-        else if (tracking.opened) reason = "Already opened";
-        else if (!userAgent || userAgent.length <= 10) reason = "Invalid/Short User-Agent";
-
-        // Record the hit anyway for debugging
+        // Log every hit for debugging
         tracking.hits.push({
             at: Date.now(),
             ip,
             ua: userAgent,
-            isProxy,
-            isSender,
-            reason
+            reason: statusReason
         });
-
-        if (shouldMarkOpened) {
-            tracking.opened = true;
-            tracking.openedAt = Date.now();
-            tracking.ip = ip;
-            tracking.userAgent = userAgent;
-            console.log(`✅ [OPENED] Recipient opened email: ${trackingId}`);
-        } else {
-            console.log(`>>> Ignored: ${reason}`);
-        }
 
         await tracking.save();
 
@@ -185,12 +191,11 @@ app.get('/track/:id', async (req, res) => {
         console.error('Tracking Error:', error);
     }
 
-    // Always send pixel
+    // Always send the 1x1 transparent pixel
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.send(pixelBuffer);
 });
-
 
 /**
  * Status Check Endpoint
@@ -198,11 +203,16 @@ app.get('/track/:id', async (req, res) => {
 app.get('/status/:id', async (req, res) => {
     try {
         const tracking = await Tracking.findOne({ trackingId: req.params.id });
+        if (!tracking) return res.status(404).json({ error: 'Not found' });
+
         res.json({
-            id: req.params.id,
-            opened: tracking ? tracking.opened : false,
-            openedAt: tracking ? tracking.openedAt : null,
-            recipient: tracking ? tracking.recipient : null
+            id: tracking.trackingId,
+            opened: tracking.opened,
+            totalOpens: tracking.totalOpens,
+            firstOpen: tracking.firstOpenedAt,
+            lastOpen: tracking.lastOpenedAt,
+            recipient: tracking.recipient,
+            history: tracking.opens
         });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -219,7 +229,8 @@ app.get('/all-status', async (req, res) => {
         all.forEach(t => {
             data[t.trackingId] = {
                 opened: t.opened,
-                openedAt: t.openedAt,
+                totalOpens: t.totalOpens,
+                lastOpen: t.lastOpenedAt,
                 recipient: t.recipient
             };
         });
@@ -230,6 +241,6 @@ app.get('/all-status', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Professional Tracker Server running on port ${PORT}`);
 });
 
