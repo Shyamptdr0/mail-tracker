@@ -19,6 +19,7 @@ const trackingSchema = new mongoose.Schema({
     trackingId: { type: String, required: true, unique: true },
     recipient: { type: String, default: 'Someone' },
     senderId: { type: String },
+    senderIp: { type: String }, // Store sender's IP during registration
     opened: { type: Boolean, default: false },
     registeredAt: { type: Date, default: Date.now },
     openedAt: { type: Date },
@@ -28,7 +29,9 @@ const trackingSchema = new mongoose.Schema({
         at: { type: Date, default: Date.now },
         ip: String,
         ua: String,
-        isProxy: Boolean
+        isProxy: Boolean,
+        isSender: Boolean,
+        reason: String
     }]
 });
 
@@ -52,7 +55,7 @@ const pixelBuffer = Buffer.from(PIXEL_BASE64, 'base64');
 app.get('/init-sender', (req, res) => {
     let senderId = req.cookies.mt_sender;
     
-    if (!senderId || senderId === 'true') {
+    if (!senderId || senderId === 'true' || senderId.length < 10) {
         senderId = uuidv4();
     }
 
@@ -73,18 +76,20 @@ app.get('/register/:id', async (req, res) => {
         const trackingId = req.params.id;
         const recipient = req.query.to || 'Someone';
         const senderId = req.cookies.mt_sender;
+        const senderIp = req.ip;
 
         await Tracking.findOneAndUpdate(
             { trackingId },
             { 
                 recipient, 
                 senderId,
+                senderIp,
                 registeredAt: Date.now()
             },
             { upsert: true, new: true }
         );
 
-        console.log(`Tracking ID Registered: ${trackingId} (For: ${recipient})`);
+        console.log(`Tracking ID Registered: ${trackingId} (For: ${recipient}) from IP: ${senderIp}`);
         res.json({ success: true });
     } catch (error) {
         console.error('Registration Error:', error);
@@ -112,31 +117,45 @@ app.get('/track/:id', async (req, res) => {
 
         if (!tracking) {
             console.log(`>>> Warning: Tracking ID ${trackingId} not found in DB`);
-            // Still send pixel
             res.set('Content-Type', 'image/png');
             return res.send(pixelBuffer);
         }
 
-        // Detect if this is a self-open
-        const isSender = senderCookie && tracking.senderId === senderCookie;
+        // 1. Detect Self-Open (Cookie or IP)
+        const isSenderCookie = senderCookie && tracking.senderId === senderCookie;
+        const isSenderIp = ip === tracking.senderIp;
+        const isSender = isSenderCookie || isSenderIp;
 
-        // Detect proxies
+        // 2. Detect Proxies/Bots
         const isProxy = userAgent.includes('GoogleImageProxy') ||
             userAgent.includes('YahooMailProxy') ||
             userAgent.includes('via ggpht.com') ||
-            userAgent.includes('facebookexternalhit');
+            userAgent.includes('facebookexternalhit') ||
+            userAgent.includes('Bot') ||
+            userAgent.includes('Crawl');
 
-        // Logic: Mark as opened only if NOT sender AND NOT proxy
-        // (We can also allow proxies if they happen long after registration, but usually proxies are just pre-scans)
-        
-        let shouldMarkOpened = !isSender && !isProxy && !tracking.opened;
+        // 3. Detect "Too Early" (Cooldown)
+        // Gmail often pre-fetches images within seconds of sending.
+        // We ignore non-sender/non-proxy hits if they happen within 10 seconds of registration.
+        const timeSinceRegistration = Date.now() - new Date(tracking.registeredAt).getTime();
+        const isCooldown = timeSinceRegistration < 10000; 
+
+        let shouldMarkOpened = !isSender && !isProxy && !isCooldown && !tracking.opened;
+
+        let reason = "";
+        if (isSender) reason = "Self-open (Cookie/IP)";
+        else if (isProxy) reason = "Proxy/Bot detected";
+        else if (isCooldown) reason = "Cooldown (Pre-fetch suspected)";
+        else if (tracking.opened) reason = "Already opened";
 
         // Record the hit anyway for debugging
         tracking.hits.push({
             at: Date.now(),
             ip,
             ua: userAgent,
-            isProxy
+            isProxy,
+            isSender,
+            reason
         });
 
         if (shouldMarkOpened) {
@@ -146,9 +165,7 @@ app.get('/track/:id', async (req, res) => {
             tracking.userAgent = userAgent;
             console.log(`✅ [OPENED] Recipient opened email: ${trackingId}`);
         } else {
-            if (isSender) console.log(`>>> Ignored: Self-open`);
-            if (isProxy) console.log(`>>> Ignored: Proxy/Bot scan`);
-            if (tracking.opened) console.log(`>>> Info: Already marked as opened`);
+            console.log(`>>> Ignored: ${reason}`);
         }
 
         await tracking.save();
@@ -162,6 +179,7 @@ app.get('/track/:id', async (req, res) => {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.send(pixelBuffer);
 });
+
 
 /**
  * Status Check Endpoint
