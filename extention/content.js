@@ -158,8 +158,10 @@
                 attachSendListener(cb);
             });
 
-        // Scan for new threads that might have been missed
-        document.querySelectorAll('.zA').forEach(row => {
+        // Scan for threads (Gmail's main list rows)
+        // Using both .zA and specific role for robustness
+        const rows = document.querySelectorAll('.zA, [role="grid"] tr[id], .v7');
+        rows.forEach(row => {
             const threadId = getThreadId(row);
             if (threadId && !threadMap[threadId] && window._lastMTId) {
                 // Auto-map if we just sent something and see a new row
@@ -185,18 +187,25 @@
                 if (!res?.success) return;
 
                 let changed = false;
+                let newOpens = [];
 
                 Object.entries(res.data).forEach(([id, data]) => {
                     if (data.opened && !openedIds.has(id)) {
                         openedIds.add(id);
+                        newOpens.push(data.recipient || 'Someone');
                         changed = true;
-
-                        showNotification(
-                            data.recipient || 'Someone',
-                            '✓✓ Email Opened'
-                        );
                     }
                 });
+
+                if (newOpens.length > 0) {
+                    if (newOpens.length === 1) {
+                        showNotification(newOpens[0], '✓✓ Email Opened');
+                    } else if (newOpens.length <= 3) {
+                        showNotification('Multiple Emails Opened', newOpens.join(', '));
+                    } else {
+                        showNotification('Email Activity', `${newOpens.length} emails have been opened.`);
+                    }
+                }
 
                 if (changed && chrome.runtime?.id) {
                     chrome.storage.local.set({
