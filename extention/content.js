@@ -81,6 +81,16 @@
             if (!pixel) return;
 
             const trackingId = pixel.dataset.id;
+            const recipient = getRecipient(composeBody);
+
+            // Notify server that mail is actually being sent NOW
+            // This resets the 10-second cooldown on the server
+            if (chrome.runtime?.id) {
+                chrome.runtime.sendMessage({
+                    action: 'fetchStatus',
+                    url: `${SERVER_URL}/register/${trackingId}?to=${encodeURIComponent(recipient)}&sent=true`
+                });
+            }
 
             // Wait for Gmail to create thread (increased timeout for reliability)
             setTimeout(() => {

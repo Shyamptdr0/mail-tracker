@@ -121,32 +121,43 @@ app.get('/track/:id', async (req, res) => {
             return res.send(pixelBuffer);
         }
 
-        // 1. Detect Self-Open (Cookie or IP)
-        const isSenderCookie = senderCookie && tracking.senderId === senderCookie;
-        const isSenderIp = ip === tracking.senderIp;
-        const isSender = isSenderCookie || isSenderIp;
+        // 1. Detect Self-Open (ONLY Cookie, IP is unreliable)
+        const isSender = senderCookie && tracking.senderId === senderCookie;
 
-        // 2. Detect Proxies/Bots
-        const isProxy = userAgent.includes('GoogleImageProxy') ||
+        // 2. Detect Proxies/Bots (Stronger Filter)
+        const isProxy =
+            userAgent.includes('GoogleImageProxy') ||
             userAgent.includes('YahooMailProxy') ||
             userAgent.includes('via ggpht.com') ||
-            userAgent.includes('facebookexternalhit') ||
-            userAgent.includes('Bot') ||
-            userAgent.includes('Crawl');
+            userAgent.includes('googleusercontent') ||
+            userAgent.toLowerCase().includes('proxy') ||
+            userAgent.toLowerCase().includes('fetch') ||
+            userAgent.toLowerCase().includes('bot');
 
-        // 3. Detect "Too Early" (Cooldown)
-        // Gmail often pre-fetches images within seconds of sending.
-        // We ignore non-sender/non-proxy hits if they happen within 10 seconds of registration.
+        // 3. Detect "Too Early" (Cooldown - increased to 30s)
         const timeSinceRegistration = Date.now() - new Date(tracking.registeredAt).getTime();
-        const isCooldown = timeSinceRegistration < 10000; 
+        const isCooldown = timeSinceRegistration < 30000; 
 
-        let shouldMarkOpened = !isSender && !isProxy && !isCooldown && !tracking.opened;
+        // 4. Strict Marking Logic
+        let shouldMarkOpened = false;
+
+        if (
+            !isSender &&
+            !isProxy &&
+            !isCooldown &&
+            !tracking.opened &&
+            userAgent &&
+            userAgent.length > 10
+        ) {
+            shouldMarkOpened = true;
+        }
 
         let reason = "";
-        if (isSender) reason = "Self-open (Cookie/IP)";
+        if (isSender) reason = "Self-open (Cookie)";
         else if (isProxy) reason = "Proxy/Bot detected";
-        else if (isCooldown) reason = "Cooldown (Pre-fetch suspected)";
+        else if (isCooldown) reason = "Cooldown (30s rule)";
         else if (tracking.opened) reason = "Already opened";
+        else if (!userAgent || userAgent.length <= 10) reason = "Invalid/Short User-Agent";
 
         // Record the hit anyway for debugging
         tracking.hits.push({
